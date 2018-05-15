@@ -41,7 +41,7 @@ fun main(args: Array<String>) {
                 }
                 "stop" -> {
                     if (server.isRunning)
-                        server.stop()
+                        stopServer()
                     else
                         outErrorMessage(ServerErrors.NOT_RUNNING_ERROR.errorMessage)
                 }
@@ -116,6 +116,11 @@ private fun set(args: String) {
 
 private fun runServer() {
     Thread(server).start()
+}
+
+
+fun stopServer(){
+    server.stop()
 }
 
 private fun getManual(): String {
