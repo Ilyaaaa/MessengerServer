@@ -1,11 +1,8 @@
 package main
 
 import data.DBConnector
-import org.jetbrains.exposed.sql.batchInsert
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.or
+import org.jetbrains.exposed.sql.*
 import data.DBConnector.Companion as DataBase
-import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.json.simple.JSONArray
 import org.json.simple.JSONObject
@@ -143,6 +140,7 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                             sendMessage(resp.toString())
                         }
 
+                        //add chat
                         6 -> {
                             var result = false
 
@@ -171,6 +169,185 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                             val resp = JSONObject()
                             resp.put("id", 6)
                             resp.put("success", result)
+                            sendMessage(resp.toString())
+                        }
+
+                        //show chats
+                        7 -> {
+                            val resp = JSONObject()
+                            resp["id"] =  7
+
+                            val chatsId = ArrayList<Int>()
+                            transaction {
+                                DataBase.ChatUsers.select{DataBase.ChatUsers.userId eq userInfo.id}.forEach {
+                                    chatsId.add(it[DataBase.ChatUsers.chatId])
+                                }
+
+                                val chats = JSONArray()
+                                DataBase.Chats.select {
+                                    DataBase.Chats.id inList chatsId or (DataBase.Chats.ownerId eq userInfo.id)
+                                }.forEach {
+                                    val chat = JSONObject()
+                                    chat["id"] = it[DataBase.Chats.id]
+                                    chat["description"] = it[DataBase.Chats.description]
+                                    chat["name"] = it[DataBase.Chats.name]
+                                    chat["ownerId"] = it[DataBase.Chats.ownerId]
+
+                                    val chatUsersId = JSONArray()
+                                    DataBase.ChatUsers.select {
+                                        DataBase.ChatUsers.chatId eq it[DataBase.Chats.id]
+                                    }.forEach {
+                                        chatUsersId.add(it[DataBase.ChatUsers.userId])
+                                    }
+                                    chat["users"] = chatUsersId.toString()
+
+                                    chats.add(chat)
+                                }
+
+                                resp.put("chats", chats)
+                                sendMessage(resp.toString())
+                            }
+                        }
+
+                        //send message
+                        8 -> {
+                            val text = jsonObject["text"].toString()
+                            val senderId = jsonObject["senderId"].toString().toInt()
+                            val chatId = jsonObject["chatId"].toString().toInt()
+                            val sendTime = jsonObject["sendTime"].toString().toLong()
+
+                            transaction {
+                                val id = DataBase.Messages.insert {
+                                    it[DataBase.Messages.text] = text
+                                    it[DataBase.Messages.senderId] = senderId
+                                    it[DataBase.Messages.chatId] = chatId
+                                    it[DataBase.Messages.sendTime] = sendTime
+                                }.generatedKey
+
+                                val usersId = ArrayList<Int>()
+                                DataBase.Chats.select { DataBase.Chats.id eq chatId }.forEach {
+                                    usersId.add(it[DataBase.Chats.ownerId])
+                                }
+
+                                DataBase.ChatUsers.select { DataBase.ChatUsers.chatId eq chatId }.forEach {
+                                    usersId.add(it[DataBase.ChatUsers.userId])
+                                }
+
+                                val resp = JSONObject()
+                                resp["id"] = 8
+                                resp["msgId"] = id
+                                resp["text"] = text
+                                resp["senderId"] = senderId
+                                resp["chatId"] = chatId
+                                resp["sendTime"] = sendTime
+
+                                for (client in server.clients)
+                                    if (usersId.contains(client.userInfo.id))
+                                        client.sendMessage(resp.toString())
+                            }
+                        }
+
+                        //get messages
+                        9 -> {
+                            val resp = JSONObject()
+                            resp["id"] = 9
+
+                            val messages = JSONArray()
+
+                            transaction {
+                                DataBase.Messages.select {
+                                    DataBase.Messages.chatId eq jsonObject["chatId"].toString().toInt()
+                                }.forEach {
+                                    val message = JSONObject()
+                                    message["id"] = it[DataBase.Messages.id]
+                                    message["text"] = it[DataBase.Messages.text]
+                                    message["senderId"] = it[DataBase.Messages.senderId]
+                                    message["chatId"] = it[DataBase.Messages.chatId]
+                                    message["sendTime"] = it[DataBase.Messages.sendTime]
+                                    messages.add(message)
+                                }
+                                resp["messages"] = messages
+
+                                sendMessage(resp.toString())
+                            }
+                        }
+
+                        //change login
+                        10 -> {
+                            var success = false
+
+                            transaction {
+                                DataBase.Users.update({DataBase.Users.id eq userInfo.id}) {
+                                    it[DataBase.Users.login] = jsonObject["login"].toString()
+                                }
+
+                                success = true
+                            }
+
+                            val resp = JSONObject()
+                            resp["id"] = 10
+                            resp["success"] = success
+                            resp["error"] = ""
+
+                            sendMessage(resp.toString())
+                        }
+
+                        //change name
+                        11 -> {
+                            var success = false
+
+                            transaction {
+                                DataBase.Users.update({DataBase.Users.id eq userInfo.id}) {
+                                    it[DataBase.Users.name] = jsonObject["name"].toString()
+                                }
+
+                                success = true
+                            }
+
+                            val resp = JSONObject()
+                            resp["id"] = 11
+                            resp["success"] = success
+                            resp["error"] = ""
+
+                            sendMessage(resp.toString())
+                        }
+
+                        //change surname
+                        12 -> {
+                            var success = false
+
+                            transaction {
+                                DataBase.Users.update({DataBase.Users.id eq userInfo.id}) {
+                                    it[DataBase.Users.name2] = jsonObject["surname"].toString()
+                                }
+
+                                success = true
+                            }
+
+                            val resp = JSONObject()
+                            resp["id"] = 12
+                            resp["success"] = success
+                            resp["error"] = ""
+
+                            sendMessage(resp.toString())
+                        }
+
+                        13 -> {
+                            var success = false
+
+                            transaction {
+                                DataBase.Users.update({DataBase.Users.id eq userInfo.id}) {
+                                    it[DataBase.Users.pass] = jsonObject["pass"].toString()
+                                }
+
+                                success = true
+                            }
+
+                            val resp = JSONObject()
+                            resp["id"] = 13
+                            resp["success"] = success
+                            resp["error"] = ""
+
                             sendMessage(resp.toString())
                         }
 

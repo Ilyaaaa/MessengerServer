@@ -11,7 +11,7 @@ class DBConnector {
     init {
         Database.connect(url, driver, user, pass)
         try {
-            transaction { create(Users, Chats, ChatUsers) }
+            transaction { create(Users, Chats, ChatUsers, Messages) }
         }catch (ex: ExceptionInInitializerError){
             println("${ServerErrors.DB_CONNECT_ERROR.errorMessage}: $ex")
             stopServer()
@@ -44,6 +44,14 @@ class DBConnector {
             val id = integer("id").autoIncrement().primaryKey()
             val userId = integer("userId") references Users.id
             val chatId = integer("chatId") references Chats.id
+        }
+
+        object Messages: Table() {
+            val id = integer("id").autoIncrement().primaryKey()
+            val text = text("text")
+            val senderId = integer("senderId") references Users.id
+            val chatId = integer("chatId") references Chats.id
+            val sendTime = long("sendTime")
         }
     }
 }
