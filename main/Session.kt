@@ -2,6 +2,7 @@ package main
 
 import data.DBConnector
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import data.DBConnector.Companion as DataBase
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.json.simple.JSONArray
@@ -187,11 +188,23 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                                 DataBase.Chats.select {
                                     DataBase.Chats.id inList chatsId or (DataBase.Chats.ownerId eq userInfo.id)
                                 }.forEach {
+                                    val chatId = it[DataBase.Chats.id]
                                     val chat = JSONObject()
-                                    chat["id"] = it[DataBase.Chats.id]
+
+                                    chat["id"] = chatId
                                     chat["description"] = it[DataBase.Chats.description]
                                     chat["name"] = it[DataBase.Chats.name]
                                     chat["ownerId"] = it[DataBase.Chats.ownerId]
+
+                                    chat["unreadMsgCount"] = (DataBase.UnreadMessages innerJoin DataBase.Messages)
+                                            .slice(DataBase.UnreadMessages.id).select {
+                                                (DataBase.UnreadMessages.userId eq userInfo.id) and (DataBase.Messages.chatId eq chatId)
+                                            }.count()
+
+                                    val row = DataBase.Messages.select { DataBase.Messages.chatId eq chatId }
+                                        .orderBy(DataBase.Messages.sendTime, false).firstOrNull()
+                                    if (row != null)  chat["lastMsgText"] = row[DataBase.Messages.text]
+                                    else chat["lastMsgText"] = ""
 
                                     val chatUsersId = JSONArray()
                                     DataBase.ChatUsers.select {
@@ -233,11 +246,21 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                                     usersId.add(it[DataBase.ChatUsers.userId])
                                 }
 
+                                DataBase.UnreadMessages.batchInsert(usersId){userId ->
+                                    run{
+                                        if(userId != userInfo.id) {
+                                            this[DataBase.UnreadMessages.msgId] = id!!.toInt()
+                                            this[DataBase.UnreadMessages.userId] = userId
+                                        }
+                                    }
+                                }
+
                                 val resp = JSONObject()
                                 resp["id"] = 8
                                 resp["msgId"] = id
                                 resp["text"] = text
                                 resp["senderId"] = senderId
+                                resp["senderName"] = "${userInfo.name} ${userInfo.name2}"
                                 resp["chatId"] = chatId
                                 resp["sendTime"] = sendTime
 
@@ -252,16 +275,26 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                             val resp = JSONObject()
                             resp["id"] = 9
 
+                            val msgsId = ArrayList<Int>()
                             val messages = JSONArray()
 
                             transaction {
                                 DataBase.Messages.select {
                                     DataBase.Messages.chatId eq jsonObject["chatId"].toString().toInt()
                                 }.forEach {
+                                    val msgId = it[DataBase.Messages.id]
+                                    msgsId.add(msgId)
+
+                                    val senderId = it[DataBase.Messages.senderId]
                                     val message = JSONObject()
-                                    message["id"] = it[DataBase.Messages.id]
+
+                                    DataBase.Users.select { DataBase.Users.id eq senderId }.forEach {
+                                        message["senderName"] = "${it[DataBase.Users.name]} ${it[DataBase.Users.name2]}"
+                                    }
+
+                                    message["id"] = msgId
                                     message["text"] = it[DataBase.Messages.text]
-                                    message["senderId"] = it[DataBase.Messages.senderId]
+                                    message["senderId"] = senderId
                                     message["chatId"] = it[DataBase.Messages.chatId]
                                     message["sendTime"] = it[DataBase.Messages.sendTime]
                                     messages.add(message)
@@ -269,6 +302,10 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                                 resp["messages"] = messages
 
                                 sendMessage(resp.toString())
+
+                                DataBase.UnreadMessages.deleteWhere {
+                                    (DataBase.UnreadMessages.userId eq userInfo.id) and (DataBase.UnreadMessages.msgId inList msgsId)
+                                }
                             }
                         }
 
@@ -332,6 +369,7 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                             sendMessage(resp.toString())
                         }
 
+                        //change password
                         13 -> {
                             var success = false
 
@@ -349,6 +387,23 @@ class Session(private val server: Server, private val socket: Socket) : Runnable
                             resp["error"] = ""
 
                             sendMessage(resp.toString())
+                        }
+
+                        //mark message as read
+                        14 -> {
+                            val userId = jsonObject["userId"].toString().toInt()
+                            val msgId = jsonObject["msgId"].toString().toInt()
+                            transaction {
+                                DataBase.UnreadMessages.deleteWhere {
+                                    (DataBase.UnreadMessages.userId eq userId) and (DataBase.UnreadMessages.msgId eq msgId)
+                                }
+
+                                val resp = JSONObject()
+                                resp["id"] = 14
+                                DataBase.Messages.select { DataBase.Messages.id eq msgId }.forEach {
+                                    resp["chatId"] = it[DataBase.Messages.chatId]
+                                }
+                            }
                         }
 
                         else -> {
